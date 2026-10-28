@@ -3,12 +3,15 @@ import time
 
 import rclpy
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from robo_interfaces.action import Deslocamento
 
 
 class RoboDeslocamentoServidor(Node):
+    """Robo que se desloca ate a localizacao (lat, lon) com velocidades dadas."""
 
     def __init__(self):
         super().__init__('robo_deslocamento_servidor')
@@ -18,7 +21,8 @@ class RoboDeslocamentoServidor(Node):
             self, Deslocamento, 'deslocamento',
             execute_callback=self.execute,
             goal_callback=self.on_goal,
-            cancel_callback=self.on_cancel)
+            cancel_callback=self.on_cancel,
+            callback_group=ReentrantCallbackGroup())
         self.get_logger().info('Action server deslocamento pronto em (0.0, 0.0).')
 
     def on_goal(self, goal_request):
@@ -51,13 +55,16 @@ class RoboDeslocamentoServidor(Node):
         feedback = Deslocamento.Feedback()
 
         while (self.lat, self.lon) != (goal.latitude, goal.longitude):
-            if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                result.distancia_percorrida = distancia
-                self.get_logger().info(f'Cancelado. Distancia percorrida: {distancia:.3f}')
-                return result
-
-            time.sleep(1.0)
+            # espera 1 segundo, verificando o cancelamento a cada 0.05 s
+            inicio = time.monotonic()
+            while time.monotonic() - inicio < 1.0:
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    result.distancia_percorrida = distancia
+                    self.get_logger().info(
+                        f'Acao cancelada. Distancia percorrida: {distancia:.3f}')
+                    return result
+                time.sleep(0.05)
 
             dlat = self._passo(self.lat, goal.latitude, vlat)
             dlon = self._passo(self.lon, goal.longitude, vlon)
@@ -77,6 +84,7 @@ class RoboDeslocamentoServidor(Node):
 
     @staticmethod
     def _passo(atual, alvo, velocidade):
+        """Deslocamento (com sinal) em 1 segundo, sem ultrapassar o alvo."""
         falta = alvo - atual
         if abs(falta) <= velocidade:
             return falta
@@ -86,8 +94,10 @@ class RoboDeslocamentoServidor(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = RoboDeslocamentoServidor()
+    # multi-thread: permite processar o cancelamento enquanto o execute roda
+    executor = MultiThreadedExecutor()
     try:
-        rclpy.spin(node)
+        rclpy.spin(node, executor=executor)
     except KeyboardInterrupt:
         pass
     finally:

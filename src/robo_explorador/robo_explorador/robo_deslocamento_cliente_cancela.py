@@ -34,13 +34,17 @@ class RoboDeslocamentoClienteCancela(Node):
     def _cancelar(self):
         self._timer.cancel()
         self.get_logger().info('Cancelando a acao apos 5 segundos...')
-        self._goal_handle.cancel_goal_async()
+        self._goal_handle.cancel_goal_async().add_done_callback(self._cancelado_cb)
+
+    def _cancelado_cb(self, future):
+        self.get_logger().info('Mensagem de cancelamento: servidor confirmou o cancelamento.')
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = RoboDeslocamentoClienteCancela()
 
+    # meta longe o bastante para nao terminar antes dos 5 segundos
     send_future = node.enviar(100.0, 50.0, 2.0, 1.0)
     rclpy.spin_until_future_complete(node, send_future)
     goal_handle = send_future.result()
@@ -52,6 +56,7 @@ def main(args=None):
         result_future = goal_handle.get_result_async()
         rclpy.spin_until_future_complete(node, result_future)
         resultado = result_future.result().result
+        node.get_logger().info('Acao CANCELADA.')
         node.get_logger().info(
             f'Distancia percorrida: {resultado.distancia_percorrida:.3f}')
 
